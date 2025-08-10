@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "request_response.h"
@@ -37,17 +38,23 @@ int main (int argc, char *argv[]) {
     if (serverFIFO == -1)
         errExit("open failed");
 
-    /* Intializes the random number generator */
-    time_t t;
-    srandom((unsigned int) time(&t));
 
     // Prepare a request
     struct Request request;
     request.cPid = getpid();
-    request.code = (int) ( ((double)random() / RAND_MAX)*10);
+    // Get the filename from the user input
+    printf("Inserisci il nome del file (max %d caratteri): ", MAX_FILENAME_SIZE - 1);
+    char input_filename[MAX_FILENAME_SIZE];
+    if (fgets(input_filename, MAX_FILENAME_SIZE, stdin) == NULL)
+        errExit("fgets failed");
+
+
+    input_filename[strcspn(input_filename, "\n")] = 0; // Remove '\n' from the input
+    // Copy the filename into the struct
+    strcpy(request.fileName, input_filename);
 
     // Step-3: The client sends a Request through the server's FIFO
-    printf("<Client> sending %d\n", request.code);
+    printf("<Client> sending %s\n", request.fileName);
     if (write(serverFIFO, &request,
         sizeof(struct Request)) != sizeof(struct Request))
         errExit("write failed");
@@ -59,12 +66,12 @@ int main (int argc, char *argv[]) {
 
     // Step-5: The client reads a Response from the server
     struct Response response;
-    if (read(clientFIFO, &response,
+    if (read(clientFIFO, &response, // wait a response
         sizeof(struct Response)) != sizeof(struct Response))
         errExit("read failed");
 
     // Step-6: The client prints the result on terminal
-    printf("<Client> The server sent the result: %d\n", response.result);
+    printf("<Client> The server sent the result: %s\n", response.hashCode);
 
     // Step-7: The client closes its FIFO
     if (close(serverFIFO) != 0 || close(clientFIFO) != 0)
