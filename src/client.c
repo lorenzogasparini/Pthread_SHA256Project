@@ -22,7 +22,7 @@ int main (int argc, char *argv[]) {
     char path2ClientFIFO [25];
     sprintf(path2ClientFIFO, "%s%d", baseClientFIFO, getpid());
 
-    printf("<Client> making FIFO...\n");
+    printf("<Client> Starting server...\n");
     // make a FIFO with the following permissions:
     // user:  read, write
     // group: write
@@ -30,54 +30,52 @@ int main (int argc, char *argv[]) {
     if (mkfifo(path2ClientFIFO, S_IRUSR | S_IWUSR | S_IWGRP) == -1)
         errExit("mkfifo failed");
 
-    printf("<Client> FIFO %s created!\n", path2ClientFIFO);
+    printf("<Client> FIFO %s created\n", path2ClientFIFO);
 
-    // Step-2: The client opens the server's FIFO to send a Request
-    printf("<Client> opening FIFO %s...\n", path2ServerFIFO);
+    // Step-2: The client opens the server's FIFO to send a request
+    printf("<Client> Opening server FIFO %s...\n", path2ServerFIFO);
     int serverFIFO = open(path2ServerFIFO, O_WRONLY);
     if (serverFIFO == -1)
-        errExit("open failed");
-
+        errExit("Write-only server fifo opening failed");
 
     // Prepare a request
     struct Request request;
     request.cPid = getpid();
     // Get the filename from the user input
-    printf("Inserisci il nome del file (max %d caratteri): ", MAX_FILENAME_SIZE - 1);
+    printf("Insert a valid file path (max %d characters): ", MAX_FILENAME_SIZE - 1);
     char input_filename[MAX_FILENAME_SIZE];
     if (fgets(input_filename, MAX_FILENAME_SIZE, stdin) == NULL)
-        errExit("fgets failed");
-
+        errExit("Fgets failed");
 
     input_filename[strcspn(input_filename, "\n")] = 0; // Remove '\n' from the input
     // Copy the filename into the struct
     strcpy(request.fileName, input_filename);
 
     // Step-3: The client sends a Request through the server's FIFO
-    printf("<Client> sending %s\n", request.fileName);
+    printf("<Client> Sending %s\n", request.fileName);
     if (write(serverFIFO, &request,
         sizeof(struct Request)) != sizeof(struct Request))
-        errExit("write failed");
+        errExit("Write-only client fifo opening failed");
 
-    // Step-4: The client opens its FIFO to get a Response
+    // Step-4: The client opens its FIFO to get a response
     int clientFIFO = open(path2ClientFIFO, O_RDONLY);
     if (clientFIFO == -1)
-        errExit("open failed");
+        errExit("Read-only client fifo opening failed");
 
-    // Step-5: The client reads a Response from the server
+    // Step-5: The client reads a response from the server
     struct Response response;
-    if (read(clientFIFO, &response, // wait a response
+    if (read(clientFIFO, &response, // Wait a response
         sizeof(struct Response)) != sizeof(struct Response))
-        errExit("read failed");
+        errExit("Server response reading failed");
 
     // Step-6: The client prints the result on terminal
-    printf("<Client> The server sent the result: %s\n", response.hashCode);
+    printf("<Client> Server response: %s\n", response.hashCode);
 
     // Step-7: The client closes its FIFO
     if (close(serverFIFO) != 0 || close(clientFIFO) != 0)
-        errExit("close failed");
+        errExit("Client fifo closing failed");
 
     // Step-8: The client removes its FIFO from the file system
     if (unlink(path2ClientFIFO) != 0)
-        errExit("unlink failed");
+        errExit("Client fifo unlink failed");
 }

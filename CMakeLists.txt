@@ -18,3 +18,5 @@ add_executable(client
 
 target_link_libraries(server pthread)
 target_link_libraries(client pthread)
+target_link_libraries(server pthread crypto)
+target_link_libraries(client pthread crypto)
