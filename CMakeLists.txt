@@ -6,17 +6,20 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra")
 
 include_directories(inc)
 
+# Server executable
 add_executable(server
         src/server.c
         src/errExit.c
+        src/threadPool.c
+        src/hashTable.c
 )
 
+# Client executable
 add_executable(client
         src/client.c
         src/errExit.c
 )
 
-target_link_libraries(server pthread)
-target_link_libraries(client pthread)
+# Link required libraries
 target_link_libraries(server pthread crypto)
 target_link_libraries(client pthread crypto)

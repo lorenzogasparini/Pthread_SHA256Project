@@ -10,20 +10,26 @@
 #include <openssl/sha.h>
 
 #include "../inc/errExit.h"
-#include "../inc/request_response.h"
+#include "../inc/requestResponse.h"
+#include "../inc/threadPool.h"
+#include "../inc/hashTable.h"
 
 #define BUF_SIZE 8192
+#define NUM_THREAD 4 
+#define EMPTY_STRING ""
 
-char *path2ServerFIFO ="/tmp/fifo_server";
-char *baseClientFIFO = "/tmp/fifo_client.";
+char *path2ServerFIFO = "/tmp/fifoServer";
+char *baseClientFIFO = "/tmp/fifoClient";
 
 // The file descriptor entry for the FIFO
 int serverFIFO, serverFIFO_extra;
 
-void quit(int);
-void * sendResponse(void * );           // Thread function
-char * calculateFileHashCode(char *);   // TODO - Not useful by now 
-char * process_file(void *);            // SHA256 processing function
+// Cache for already calculated hashes
+HashTable *cache;
+
+void quit(int);                                 // Exit function
+void processRequest(void * );                   // Thread function
+char *SHA256_hashFile(void *);                  // SHA256 processing function
 
 // The quit function closes the file descriptors for the FIFO,
 // Removes the FIFO from the file system, and terminates the process
@@ -43,12 +49,16 @@ void quit(int sig) {
     if (unlink(path2ServerFIFO) != 0)
         errExit("Server fifo unlink failed");
 
+    // Free hash table
+    if (cache)
+        free_hash_table(cache);
+
     // Terminate the process
     _exit(0);
 }
 
-void * sendResponse(void *requestVoid) {
-    // Retrieve and deallocate the pointer to the 'Request struct'
+void processRequest(void *requestVoid) {
+    // Retrieve and deallocate the pointer to the request
     struct Request * request = (struct Request *) requestVoid;
 
     // Make the path of client's FIFO
@@ -61,36 +71,43 @@ void * sendResponse(void *requestVoid) {
     if (clientFIFO == -1) {
         printf("<Server> Client fifo opening failed");
         free(request); // Free memory
-        return NULL;
     }
 
-    // Prepare the response for the client
+    // Preparing response for the client
     struct Response response;
-    strcpy(response.hashCode, process_file(request->fileName));
+
+    // Check if the cache already got the related hash value
+    char *cachedHash = hash_table_get(cache, request->fileName);
+    if (cachedHash) {
+        strcpy(response.hashCode, cachedHash);
+        printf("<Server> Cache hit for file '%s'\n", request->fileName);
+    } else {
+        char *hash = SHA256_hashFile(request->fileName);
+        if (!hash) hash = (char *)EMPTY_STRING;
+
+        strcpy(response.hashCode, hash);
+        hash_table_insert(cache, request->fileName, hash);
+        free(hash);
+    }
 
     // Write response into the client FIFO
-    if (write(clientFIFO, &response,sizeof(struct Response)) != sizeof(struct Response)) {
-        printf("<Server> Server fifo writing failed");
-        free(request); // Free memory
-        return NULL;
-    }
+    if (write(clientFIFO, &response, sizeof(struct Response)) != sizeof(struct Response))
+        printf("<Server> Server fifo writing failed\n");
 
-    // Close the FIFO
+    // Close FIFO
     if (close(clientFIFO) != 0)
         printf("<Server> close failed");
 
-    free(request); // Free memory
-    return NULL;
+    free(request);
 }
 
-char * process_file(void *arg) {
+char *SHA256_hashFile(void *arg) {
     char *filename = (char *)arg;
     FILE *file = fopen(filename, "rb");
 
     if (!file) {
-        perror("Errore during file opening");
-        free(filename);
-        return NULL;
+        perror("Error during file opening");
+        return EMPTY_STRING;
     }
 
     unsigned char buffer[BUF_SIZE];
@@ -117,32 +134,37 @@ char * process_file(void *arg) {
     printf("<Server> Thread [%lu] - SHA256 Digest generation of path '%s':\n<Server> Digest created: %s\n",
            pthread_self(), filename, hashStr);
 
-    //free(filename);
     return hashStr;
 }
 
-// TODO: implement a hash function - maybe not useful
-char * calculateFileHashCode(char * fileName) {
-    return "HashCodePlaceholder";
-}
-
 int main(int argc, char *argv[]) {
-    printf("<Server> Starting client...\n");
+    ThreadPool my_pool;
+    int task_id = 1;
+
+    printf("<Server> Starting server...\n");
     // Make a FIFO with the following permissions:
     // user:  read, write
     // group: write
     // other: no permission
 
-    unlink(path2ServerFIFO);  // Remove the FIFO before creating it
+    // Remove the FIFO before creating it
+    unlink(path2ServerFIFO); 
+    
     if (mkfifo(path2ServerFIFO, S_IRUSR | S_IWUSR | S_IWGRP) == -1)
         errExit("mkfifo failed");
-
     printf("<Server> FIFO %s created\n", path2ServerFIFO);
 
-    // Set a signal handler for SIGALRM and SIGINT signals // todo: serve?
+    // Set a signal handler for SIGALRM and SIGINT signals
     if (signal(SIGALRM, quit) == SIG_ERR ||
         signal(SIGINT, quit) == SIG_ERR)
     { errExit("Signal handlers setting failed"); }
+
+    // Initialize thread pool
+    printf("Initializing thread pool with %d thread...\n", NUM_THREAD);
+    threadpool_init(&my_pool, NUM_THREAD);
+
+    // Hash table creation
+    cache = create_hash_table();
 
     // Wait for client in read-only mode. The open blocks the calling process
     // until another process opens the same FIFO in write-only mode
@@ -162,10 +184,10 @@ int main(int argc, char *argv[]) {
     do {
         printf("<Server> Waiting for a request...\n");
 
-        // Dynamic allocation of an empty request struct
+        // Dynamic allocation of an empty request
         request = (struct Request *)malloc(sizeof(struct Request));
         if (request == NULL) {
-            perror("Malloc failed");
+            perror("Request allocation failed");
             continue;
         }
 
@@ -173,30 +195,23 @@ int main(int argc, char *argv[]) {
         // This is necessary because otherwise if we keep request in the stack the do-while loop constantly changes it
         // In this way each time a new request is allocated in the heap
         bR = read(serverFIFO, request, sizeof(struct Request));
-
+        
         // Check the number of bytes read from the FIFO
         if (bR == -1) {
-            printf("<Server> Something went wrong while reading request\n");
-            free(request); // Free memory
+            printf("<Server> Something went wrong while reading request (task_id=%d)\n", task_id);
+            free(request);
         } else if (bR != sizeof(struct Request) || bR == 0) {
-            printf("<Server> Bad request received\n");
-            free(request); // Free memory
+            printf("<Server> Bad request received (task_id=%d)\n", task_id);
+            free(request);
         } else {
-            pthread_t thread;
-            if (pthread_create(&thread, NULL, sendResponse, (void*)request) != 0) {
-                perror("Error during thread creation");
-                free(request); // Free memory
-                exit(EXIT_FAILURE);
-            }
-            // By now, we keep a stand-alone thread processing (it's independent)
-            // Thread processes the request on its own and then replies when finishes
-            // It's not needed a join management by now. In future we have to manage a thread pool system 
-            pthread_detach(thread);
+            printf("<Server> Forward request to a separate thread (task_id=%d)...\n", task_id);
+            threadpool_add_job(&my_pool, processRequest, request);
         }
-
+        task_id++;
     } while (bR != -1);
 
-    // FIFO is not working, run quit() to remove the FIFO and terminate the process 
+    threadpool_wait(&my_pool);
+    threadpool_destroy(&my_pool);
     quit(0);
     return 0;
 }

@@ -1,58 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
-#include <unistd.h> // Per la funzione sleep()
+#include <unistd.h>
 
-/* Semaforo binario contatore bsem */
-typedef struct bsem {
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-    int v;
-} bsem;
+#include "../inc/threadPool.h"
 
-/* job */
-typedef struct job{
-    struct job* prev;
-    void (*function)(void* arg);
-    void* arg;
-} job;
-
-/* Coda dei job */
-typedef struct jobqueue{
-    pthread_mutex_t rwmutex;
-    job *front;
-    job *rear;
-    bsem *has_jobs;
-    int len;
-} jobqueue;
-
-/* Thread worker */
-typedef struct thread{
-    int id;
-    pthread_t pthread;
-    struct thpool_* thpool_p;
-} thread;
-
-/* Threadpool */
-typedef struct thpool_{
-    thread** threads;
-    volatile int num_threads_alive;
-    volatile int num_threads_working;
-    pthread_mutex_t thcount_lock;
-    pthread_cond_t threads_all_idle;
-    jobqueue jobqueue;
-} thpool_;
-
-typedef struct thpool_ ThreadPool;
-
-// Inizializza un semaforo binario, bsem, contatore
+/* Init Binary Semaphore */
 void bsem_init(bsem *b, int v) {
     pthread_mutex_init(&(b->mutex), NULL);
     pthread_cond_init(&(b->cond), NULL);
     b->v = v;
 }
 
-// Operazione wait su semaforo binario bsem
+/* Wait Binary Semaphore */
 void bsem_wait(bsem *b) {
     pthread_mutex_lock(&(b->mutex));
     while (b->v == 0) {
@@ -62,6 +22,7 @@ void bsem_wait(bsem *b) {
     pthread_mutex_unlock(&(b->mutex));
 }
 
+/* Signal there is a available job */
 void bsem_post(bsem *b) {
     pthread_mutex_lock(&(b->mutex));
     b->v++;
@@ -69,7 +30,7 @@ void bsem_post(bsem *b) {
     pthread_mutex_unlock(&(b->mutex));
 }
 
-// Inizializza la coda dei job
+/* Init Job Queue */
 static void jobqueue_init(jobqueue *jobqueue) {
     jobqueue->len = 0;
     jobqueue->front = NULL;
@@ -77,13 +38,13 @@ static void jobqueue_init(jobqueue *jobqueue) {
     pthread_mutex_init(&(jobqueue->rwmutex), NULL);
     jobqueue->has_jobs = (bsem*)malloc(sizeof(bsem));
     if (jobqueue->has_jobs == NULL) {
-        perror("Errore di allocazione per bsem");
+        perror("Error during allocation bsem");
         exit(1);
     }
     bsem_init(jobqueue->has_jobs, 0);
 }
 
-// Distrugce la coda dei job e libera la memoria
+/* Empty the queue and free the memory */
 static void jobqueue_destroy(jobqueue *jobqueue) {
     job* curr_job = jobqueue->front;
     while(curr_job != NULL) {
@@ -95,7 +56,7 @@ static void jobqueue_destroy(jobqueue *jobqueue) {
     free(jobqueue->has_jobs);
 }
 
-// Estrae un job dalla coda
+/* Extract a job from the queue */
 static job* jobqueue_pull(jobqueue *jobqueue) {
     pthread_mutex_lock(&(jobqueue->rwmutex));
     job* job = jobqueue->front;
@@ -105,11 +66,11 @@ static job* jobqueue_pull(jobqueue *jobqueue) {
         return NULL;
     }
 
-    // Rimuove il job dalla coda
+    // Remove a job from the queue
     jobqueue->front = job->prev;
     jobqueue->len--;
 
-    // Se la coda è vuota, aggiorna il puntatore rear
+    // If queue is empty, update rear pointer
     if (jobqueue->len == 0) {
         jobqueue->rear = NULL;
     }
@@ -118,12 +79,11 @@ static job* jobqueue_pull(jobqueue *jobqueue) {
     return job;
 }
 
-//  Funzione eseguita da ogni thread
+/* Thread execution function */
 void *worker_thread(void *arg) {
     thread* self = (thread*)arg;
     ThreadPool* thpool_p = self->thpool_p;
 
-    // Incrementa il conteggio dei thread attivi
     pthread_mutex_lock(&(thpool_p->thcount_lock));
     thpool_p->num_threads_alive++;
     pthread_mutex_unlock(&(thpool_p->thcount_lock));
@@ -131,12 +91,10 @@ void *worker_thread(void *arg) {
     while(1) {
         bsem_wait(thpool_p->jobqueue.has_jobs);
 
-        // Verifica distruzione threadpool
         if (thpool_p->num_threads_alive == 0) {
             break;
         }
 
-        // Estrazione job dalla coda
         pthread_mutex_lock(&(thpool_p->thcount_lock));
         thpool_p->num_threads_working++;
         pthread_mutex_unlock(&(thpool_p->thcount_lock));
@@ -144,23 +102,20 @@ void *worker_thread(void *arg) {
         job* current_job = jobqueue_pull(&(thpool_p->jobqueue));
 
         if (current_job) {
-            // Esecuzione lavoro
             current_job->function(current_job->arg);
             free(current_job);
         }
 
-        // Aggiorna il valore dei thread che lavorano
         pthread_mutex_lock(&(thpool_p->thcount_lock));
         thpool_p->num_threads_working--;
 
-        // Se la coda è vuota e non ci sono più thread che lavorano, invia un segnale --> DA VERIFICARE
+        // If the queue is empty, send a signal to all thread 
         if (thpool_p->jobqueue.len == 0 && thpool_p->num_threads_working == 0) {
             pthread_cond_signal(&(thpool_p->threads_all_idle));
         }
         pthread_mutex_unlock(&(thpool_p->thcount_lock));
     }
 
-    // Decrementa il conteggio dei thread attivi prima di uscire
     pthread_mutex_lock(&(thpool_p->thcount_lock));
     thpool_p->num_threads_alive--;
     pthread_mutex_unlock(&(thpool_p->thcount_lock));
@@ -168,34 +123,31 @@ void *worker_thread(void *arg) {
     return NULL;
 }
 
-//  Inizializza il thread pool
+// Init Thread Pool
 void threadpool_init(ThreadPool *pool, int num_threads) {
     if (num_threads < 1) {
         num_threads = 1;
     }
 
-    // Alloca memoria per i thread del thread pool
+    // Allocate memory for threads in the thread pool
     pool->threads = (thread**)malloc(sizeof(thread*) * num_threads);
     if (pool->threads == NULL) {
-        perror("Errore di allocazione per i thread");
+        perror("Error during thread allocation");
         exit(1);
     }
 
     pool->num_threads_alive = 0;
     pool->num_threads_working = 0;
 
-    // Inizializza la coda dei job
     jobqueue_init(&(pool->jobqueue));
-
-    // Inizializza i mutex e le variabili di condizione
     pthread_mutex_init(&(pool->thcount_lock), NULL);
     pthread_cond_init(&(pool->threads_all_idle), NULL);
 
-    // Crea i thread worker
+    // Thread creation in thread pool
     for (int i = 0; i < num_threads; i++) {
         pool->threads[i] = (thread*)malloc(sizeof(thread));
         if (pool->threads[i] == NULL) {
-            perror("Errore di allocazione per il thread");
+            perror("Error during thread allocation");
             exit(1);
         }
         pool->threads[i]->thpool_p = pool;
@@ -204,11 +156,11 @@ void threadpool_init(ThreadPool *pool, int num_threads) {
     }
 }
 
-//  Aggiunge un job al thread pool
-void threadpool_add_task(ThreadPool *pool, void (*function)(void*), void* arg) {
+// Add a job to thread pool
+void threadpool_add_job(ThreadPool *pool, void (*function)(void*), void* arg) {
     job* new_job = (job*)malloc(sizeof(job));
     if (new_job == NULL) {
-        perror("Errore di allocazione per il job");
+        perror("Error during job allocation");
         return;
     }
     new_job->function = function;
@@ -228,11 +180,11 @@ void threadpool_add_task(ThreadPool *pool, void (*function)(void*), void* arg) {
 
     pthread_mutex_unlock(&(pool->jobqueue.rwmutex));
 
-    // Segnala che c'è un nuovo job disponibile
+    // Signal there is an available job 
     bsem_post(pool->jobqueue.has_jobs);
 }
 
-//  Blocca il thread chiamante finché tutti i job non sono completati.
+// Block the calling thread until all the jobs are completed
 void threadpool_wait(ThreadPool *pool) {
     pthread_mutex_lock(&(pool->thcount_lock));
     while (pool->jobqueue.len > 0 || pool->num_threads_working > 0) {
@@ -241,33 +193,32 @@ void threadpool_wait(ThreadPool *pool) {
     pthread_mutex_unlock(&(pool->thcount_lock));
 }
 
-//  Distrugge il thread pool e libera tutte le risorse
+// Empty the thread pool and free the resources allocated
 void threadpool_destroy(ThreadPool *pool) {
     if (pool == NULL) {
         return;
     }
 
-    // Prima di distruggere, attendiamo che tutti i task siano completati
+    // Wait for all threads to finish
     threadpool_wait(pool);
 
-    // Imposta il numero di thread attivi a 0 per segnalare l'uscita
+    // Set the number of active threads to 0 to signal exit
     pthread_mutex_lock(&(pool->thcount_lock));
     pool->num_threads_alive = 0;
     pthread_mutex_unlock(&(pool->thcount_lock));
 
-    // Sveglia tutti i thread in attesa
+    // Wakeup all waiting threads
     for (int i = 0; i < pool->num_threads_alive + pool->num_threads_working; i++) {
         bsem_post(pool->jobqueue.has_jobs);
     }
 
-    // Attendi che tutti i thread terminino
+    // Join all threads
     for (int i = 0; i < pool->num_threads_alive; i++) {
         pthread_join(pool->threads[i]->pthread, NULL);
     }
 
-    // Libera la memoria allocata
+    // Free allocated memory
     jobqueue_destroy(&(pool->jobqueue));
-
     for (int i = 0; i < pool->num_threads_alive; i++) {
         free(pool->threads[i]);
     }
@@ -276,46 +227,14 @@ void threadpool_destroy(ThreadPool *pool) {
     pthread_mutex_destroy(&(pool->thcount_lock));
     pthread_cond_destroy(&(pool->threads_all_idle));
 
-    printf("Thread pool distrutto con successo.\n");
+    printf("Thread pool destroyed succesfully\n");
 }
 
-
-// Funzione di esempio per un job
+// Sample function for a thread task
 void simple_task(void* arg) {
     int task_id = *(int*)arg;
-    printf("\nEsecuzione del task %d su thread %lu\n", task_id, (unsigned long)pthread_self());
-    printf("Test! -> %d\n", arg);
+    printf("\nExecuting task %d on thread %lu\n", task_id, (unsigned long)pthread_self());
     usleep(100000);
-    printf("Completato il task %d\n", task_id);
+    printf("Completed task %d\n", task_id);
     free(arg);
-}
-
-int main() {
-    ThreadPool my_pool;
-    int num_threads = 4;
-    int num_tasks = 20;
-
-    printf("Inizializzazione del thread pool con %d thread...\n", num_threads);
-    threadpool_init(&my_pool, num_threads);
-
-    printf("Aggiunta di %d task al thread pool...\n", num_tasks);
-    for (int i = 0; i < num_tasks; i++) {
-        int* task_id = (int*)malloc(sizeof(int));
-        if (task_id == NULL) {
-            perror("Errore di allocazione per task_id");
-            exit(1);
-        }
-        *task_id = i + 1;
-        threadpool_add_task(&my_pool, simple_task, task_id);
-    }
-
-    // Attendi che tutti i task siano completati
-    threadpool_wait(&my_pool);
-
-    printf("Tutti i task sono stati completati.\n");
-
-    printf("Distruzione del thread pool...\n");
-    threadpool_destroy(&my_pool);
-
-    return 0;
 }
