@@ -6,12 +6,12 @@
 
 // Simple hash function: foreach char add due value to hash
 unsigned int hash(const char *key) {
-    unsigned long hash = 0;
+    unsigned int hash = 0;
     while (*key != '\0') {
-        hash = (hash * 31) + *key;
+        hash += *key;
         key++;
     }
-    return (int) hash % TABLE_SIZE;
+    return hash % TABLE_SIZE;
 }
 
 // Initialize hash table

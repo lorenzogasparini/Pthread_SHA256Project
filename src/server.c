@@ -26,7 +26,8 @@ char *baseClientFIFO = "/tmp/fifoClient";
 int serverFIFO, serverFIFO_extra;
 
 // Cache for already calculated hashes
-//HashTable *cache;
+HashTable *cache;
+pthread_mutex_t cacheMutex; // just one thread can access the cache at the same time
 
 void quit(int);                                 // Exit function
 void processRequest(void * );                   // Thread function
@@ -51,8 +52,8 @@ void quit(int sig) {
         errExit("Server fifo unlink failed");
 
     // Free hash table
-    //if (cache)
-    //    free_hash_table(cache);
+    if (cache)
+        free_hash_table(cache);
 
     // Terminate the process
     _exit(0);
@@ -72,24 +73,53 @@ void processRequest(void *requestVoid) {
     if (clientFIFO == -1) {
         printf("<Server> Client fifo opening failed");
         free(request); // Free memory
+        return;
     }
 
     // Preparing response for the client
     struct Response response;
 
-    // Check if the cache already got the related hash value
-    //char *cachedHash = hash_table_get(cache, request->fileName);
-    //if (cachedHash) {
-    //    strcpy(response.hashCode, cachedHash);
-    //    printf("<Server> Cache hit for file '%s'\n", request->fileName);
-    //} else {
-        char *hash = SHA256_hashFile(request->fileName);
-        if (!hash) hash = (char *)EMPTY_STRING;
+    // Pointers to the hash string. `hash_to_send` is what we will send to the client.
+    // `newly_created_hash` is the pointer we get from SHA256_hashFile,
+    // which needs to be freed later if it's not from the cache.
+    char *hash_to_send = NULL;
+    char *newly_created_hash = NULL;
 
-        strcpy(response.hashCode, hash);
-    //    hash_table_insert(cache, request->fileName, hash);
-    //    free(hash);
-    //}
+    // Lock the mutex before accessing the shared cache
+    pthread_mutex_lock(&cacheMutex);
+    char *cachedHash = hash_table_get(cache, request->fileName);
+
+    if (cachedHash) {
+        hash_to_send = cachedHash;
+        printf("<Server> Cache hit for file '%s'\n", request->fileName);
+    } else {
+        // Cache miss: unlock the mutex while performing the long-running hash calculation
+        pthread_mutex_unlock(&cacheMutex);
+        newly_created_hash = SHA256_hashFile(request->fileName);
+
+        // Re-lock the mutex to update the cache and prepare the response
+        pthread_mutex_lock(&cacheMutex);
+
+        if (newly_created_hash) {
+            // Successfully created a new hash. Insert a copy into the cache.
+            hash_table_insert(cache, request->fileName, newly_created_hash);
+            hash_to_send = newly_created_hash;
+        } else {
+            // File not found or error. Use an empty string.
+            hash_to_send = (char *)EMPTY_STRING;
+        }
+    }
+    pthread_mutex_unlock(&cacheMutex);
+
+    // Copy the hash to the response
+    strcpy(response.hashCode, hash_to_send);
+
+    // If we created a new hash, we must free the memory after copying it to the response.
+    // If it was a cache hit, hash_to_send points to memory owned by the hash table,
+    // which should not be freed here.
+    if (newly_created_hash) {
+        free(newly_created_hash);
+    }
 
     // Write response into the client FIFO
     if (write(clientFIFO, &response, sizeof(struct Response)) != sizeof(struct Response))
@@ -167,7 +197,11 @@ int main(int argc, char *argv[]) {
     threadpool_init(&my_pool, NUM_THREAD);
 
     // Hash table creation
-    // cache = create_hash_table();
+    cache = create_hash_table();
+    // Initialize cache mutex
+    if (pthread_mutex_init(&cacheMutex, NULL) != 0) {
+        errExit("Mutex init failed");
+    }
 
     // Initialize cache mutex
 
@@ -226,6 +260,7 @@ int main(int argc, char *argv[]) {
 
     threadpool_wait(&my_pool);
     threadpool_destroy(&my_pool);
+    pthread_mutex_destroy(&cacheMutex); // Distruggi il mutex prima di uscire
     quit(0);
     return 0;
 }
