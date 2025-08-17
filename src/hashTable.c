@@ -4,16 +4,14 @@
 
 #include "../inc/hashTable.h"
 
-#define TABLE_SIZE 10000
-
-// Simple hash function
+// Simple hash function: foreach char add due value to hash
 unsigned int hash(const char *key) {
-    unsigned int hash = 0;
-    while (*key) {
+    unsigned long hash = 0;
+    while (*key != '\0') {
         hash = (hash * 31) + *key;
         key++;
     }
-    return hash % TABLE_SIZE;
+    return (int) hash % TABLE_SIZE;
 }
 
 // Initialize hash table
@@ -23,6 +21,8 @@ HashTable *create_hash_table() {
         perror("malloc failed");
         exit(EXIT_FAILURE);
     }
+
+    // initialize hashTable
     for (int i = 0; i < TABLE_SIZE; i++) {
         ht->table[i] = NULL;
     }
@@ -34,8 +34,9 @@ void hash_table_insert(HashTable *ht, const char *key, const char *value) {
     unsigned int index = hash(key);
     Entry *entry = ht->table[index];
 
-    // Check if key already exists
+    // Check if key already exists and scroll through the list
     while (entry != NULL) {
+        // if the key already exists update the value instead of inserting a duplicate
         if (strcmp(entry->key, key) == 0) {
             free(entry->value);
             entry->value = strdup(value);
@@ -44,7 +45,7 @@ void hash_table_insert(HashTable *ht, const char *key, const char *value) {
         entry = entry->next;
     }
 
-    // Insert new entry at the head of the list
+    // Insert new entry at the head (fast insert) of the list because the key was not found!
     Entry *new_entry = malloc(sizeof(Entry));
     if (!new_entry) {
         perror("malloc failed");

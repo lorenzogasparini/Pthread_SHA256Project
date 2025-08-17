@@ -5,12 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TABLE_SIZE 100
+#define TABLE_SIZE 1000
 
 // Struct for a hash table entry (key-value pair)
-typedef struct Entry {
-    char *key;
-    char *value;
+typedef struct Entry { // in our example is the hash of an already calculated filename
+    char *key;          // filename
+    char *value;        // hashcode
     struct Entry *next;
 } Entry;
 

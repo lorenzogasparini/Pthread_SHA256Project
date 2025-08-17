@@ -4,9 +4,10 @@
 
 #define MAX_FILENAME_SIZE 256  /* Massima dimensione del nome del file */
 
-struct Request {          /* Request (client --> server)  */
-    pid_t cPid;           /* PID of client                */
-    char fileName[MAX_FILENAME_SIZE]; /* Nome del file */
+struct Request {                        /* Request (client --> server)  */
+    pid_t cPid;                         /* PID of client                */
+    char fileName[MAX_FILENAME_SIZE];   /* Nome del file                */
+    long long fileSize;                 /* per l'ordinamento della coda */
 };
 
 struct Response {         /* Response (server --> client) */

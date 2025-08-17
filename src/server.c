@@ -15,7 +15,8 @@
 #include "../inc/hashTable.h"
 
 #define BUF_SIZE 8192
-#define NUM_THREAD 4 
+// #define NUM_THREAD (sysconf(_SC_NPROCESSORS_ONLN) - 1) // TODO: decommentare finiti i test
+#define NUM_THREAD 2
 #define EMPTY_STRING ""
 
 char *path2ServerFIFO = "/tmp/fifoServer";
@@ -25,7 +26,7 @@ char *baseClientFIFO = "/tmp/fifoClient";
 int serverFIFO, serverFIFO_extra;
 
 // Cache for already calculated hashes
-HashTable *cache;
+//HashTable *cache;
 
 void quit(int);                                 // Exit function
 void processRequest(void * );                   // Thread function
@@ -50,8 +51,8 @@ void quit(int sig) {
         errExit("Server fifo unlink failed");
 
     // Free hash table
-    if (cache)
-        free_hash_table(cache);
+    //if (cache)
+    //    free_hash_table(cache);
 
     // Terminate the process
     _exit(0);
@@ -77,18 +78,18 @@ void processRequest(void *requestVoid) {
     struct Response response;
 
     // Check if the cache already got the related hash value
-    char *cachedHash = hash_table_get(cache, request->fileName);
-    if (cachedHash) {
-        strcpy(response.hashCode, cachedHash);
-        printf("<Server> Cache hit for file '%s'\n", request->fileName);
-    } else {
+    //char *cachedHash = hash_table_get(cache, request->fileName);
+    //if (cachedHash) {
+    //    strcpy(response.hashCode, cachedHash);
+    //    printf("<Server> Cache hit for file '%s'\n", request->fileName);
+    //} else {
         char *hash = SHA256_hashFile(request->fileName);
         if (!hash) hash = (char *)EMPTY_STRING;
 
         strcpy(response.hashCode, hash);
-        hash_table_insert(cache, request->fileName, hash);
-        free(hash);
-    }
+    //    hash_table_insert(cache, request->fileName, hash);
+    //    free(hash);
+    //}
 
     // Write response into the client FIFO
     if (write(clientFIFO, &response, sizeof(struct Response)) != sizeof(struct Response))
@@ -109,6 +110,8 @@ char *SHA256_hashFile(void *arg) {
         perror("Error during file opening");
         return EMPTY_STRING;
     }
+
+    sleep(5); // stop to accumulate jobs (file to hash)
 
     unsigned char buffer[BUF_SIZE];
     unsigned char hash[SHA256_DIGEST_LENGTH];
@@ -148,8 +151,8 @@ int main(int argc, char *argv[]) {
     // other: no permission
 
     // Remove the FIFO before creating it
-    unlink(path2ServerFIFO); 
-    
+    unlink(path2ServerFIFO);
+
     if (mkfifo(path2ServerFIFO, S_IRUSR | S_IWUSR | S_IWGRP) == -1)
         errExit("mkfifo failed");
     printf("<Server> FIFO %s created\n", path2ServerFIFO);
@@ -160,11 +163,13 @@ int main(int argc, char *argv[]) {
     { errExit("Signal handlers setting failed"); }
 
     // Initialize thread pool
-    printf("Initializing thread pool with %d thread...\n", NUM_THREAD);
+    printf("Initializing thread pool with %ld thread...\n", NUM_THREAD);
     threadpool_init(&my_pool, NUM_THREAD);
 
     // Hash table creation
-    cache = create_hash_table();
+    // cache = create_hash_table();
+
+    // Initialize cache mutex
 
     // Wait for client in read-only mode. The open blocks the calling process
     // until another process opens the same FIFO in write-only mode
@@ -191,11 +196,11 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        // Read a request from the FIFO and put it in request in heap
+        // Read a request from the FIFO and put it in request in heap memory
         // This is necessary because otherwise if we keep request in the stack the do-while loop constantly changes it
         // In this way each time a new request is allocated in the heap
         bR = read(serverFIFO, request, sizeof(struct Request));
-        
+
         // Check the number of bytes read from the FIFO
         if (bR == -1) {
             printf("<Server> Something went wrong while reading request (task_id=%d)\n", task_id);
@@ -205,6 +210,15 @@ int main(int argc, char *argv[]) {
             free(request);
         } else {
             printf("<Server> Forward request to a separate thread (task_id=%d)...\n", task_id);
+
+            // get fileSize and insert the value in the relative request
+            struct stat st;
+            if (stat(request->fileName, &st) == 0) {
+                request->fileSize = st.st_size;
+            } else {
+                request->fileSize = -1; // ErrorValue
+            }
+
             threadpool_add_job(&my_pool, processRequest, request);
         }
         task_id++;
