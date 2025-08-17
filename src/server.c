@@ -91,7 +91,7 @@ void processRequest(void *requestVoid) {
 
     if (cachedHash) {
         hash_to_send = cachedHash;
-        printf("<Server> Cache hit for file '%s'\n", request->fileName);
+        printf("<Server> Cache hit for file '%s'!\n", request->fileName);
     } else {
         // Cache miss: unlock the mutex while performing the long-running hash calculation
         pthread_mutex_unlock(&cacheMutex);
