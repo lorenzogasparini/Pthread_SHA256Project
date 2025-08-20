@@ -97,6 +97,8 @@ void processRequest(void *requestVoid) {
         pthread_mutex_unlock(&cacheMutex);
         newly_created_hash = SHA256_hashFile(request->fileName);
 
+        //  sleep(20);
+
         // Re-lock the mutex to update the cache and prepare the response
         pthread_mutex_lock(&cacheMutex);
 

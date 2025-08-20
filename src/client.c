@@ -15,6 +15,7 @@ char *path2ServerFIFO = "/tmp/fifoServer";
 char *baseClientFIFO = "/tmp/fifoClient";
 
 #define MAX 100
+#define TIMEOUT_SECONDS 10
 
 int main (int argc, char *argv[]) {
     if (argc < 2) {
@@ -56,13 +57,40 @@ int main (int argc, char *argv[]) {
     if (clientFIFO == -1)
         errExit("Read-only client fifo opening failed");
 
-    // Step-5: Read response
-    struct Response response;
-    if (read(clientFIFO, &response, sizeof(struct Response)) != sizeof(struct Response))
-        errExit("Server response reading failed");
+    fd_set read_fds;
+    struct timeval timeout;
+    int retval;
 
-    // Step-6: Print server response
-    printf("<Client> Server response: %s\n", response.hashCode);
+    // Pulisce il set di file descriptor
+    FD_ZERO(&read_fds);
+    // Aggiunge il file descriptor del clientFIFO al set
+    FD_SET(clientFIFO, &read_fds);
+
+    // Imposta la struttura timeval per il timeout
+    timeout.tv_sec = TIMEOUT_SECONDS;
+    timeout.tv_usec = 0;
+
+    printf("<Client> Waiting for a response (timeout: %d seconds)...\n", TIMEOUT_SECONDS);
+
+    // Step-5: Wait for a response with a timeout
+    retval = select(clientFIFO + 1, &read_fds, NULL, NULL, &timeout);
+
+    if (retval == -1) {
+        errExit("select() failed");
+    } else if (retval) {
+        printf("<Client> Data is available, reading response...\n");
+        struct Response response;
+        if (read(clientFIFO, &response, sizeof(struct Response)) != sizeof(struct Response)) {
+            errExit("Server response reading failed");
+        }
+        // Step-6: Print server response
+        printf("<Client> Server response: %s\n", response.hashCode);
+    } else {
+        // Timeout scaduto
+        printf("<Client> Timeout occurred! No response from server after %d seconds.\n", TIMEOUT_SECONDS);
+        // Esci dal programma con un codice di errore
+        exit(EXIT_FAILURE);
+    }
 
     // Step-7: Close FIFOs
     if (close(serverFIFO) != 0 || close(clientFIFO) != 0)
