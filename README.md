@@ -7,7 +7,7 @@
     <i>Project for a service to calculate the SHA-256 fingerprint of multiple files.</i>
     <br />
     <br />
-    <a href="https://github.com/lorenzogasparini/ProgettoIngegneriaSw/tree/main/doc"><strong>Explore the docs »</strong></a>
+    <a href=""><strong>Explore the docs »</strong></a>
     <br />
     <a href="https://github.com/lorenzogasparini/ProgettoIngegneriaSw/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
     &middot;
