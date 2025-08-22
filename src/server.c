@@ -15,9 +15,8 @@
 #include "../inc/hashTable.h"
 
 #define BUF_SIZE 8192
-// #define NUM_THREAD (sysconf(_SC_NPROCESSORS_ONLN) - 1) // TODO: decommentare finiti i test
-#define NUM_THREAD 2
-#define EMPTY_STRING ""
+#define NUM_THREAD (sysconf(_SC_NPROCESSORS_ONLN) - 1)
+#define NO_FILE_FOUND "No such file or directory"
 
 char *path2ServerFIFO = "/tmp/fifoServer";
 char *baseClientFIFO = "/tmp/fifoClient";
@@ -107,8 +106,8 @@ void processRequest(void *requestVoid) {
             hash_table_insert(cache, request->fileName, newly_created_hash);
             hash_to_send = newly_created_hash;
         } else {
-            // File not found or error. Use an empty string.
-            hash_to_send = (char *)EMPTY_STRING;
+            // File not found or error
+            hash_to_send = (char *)NO_FILE_FOUND;
         }
     }
     pthread_mutex_unlock(&cacheMutex);
@@ -140,7 +139,7 @@ char *SHA256_hashFile(void *arg) {
 
     if (!file) {
         perror("Error during file opening");
-        return EMPTY_STRING;
+        return NULL;
     }
 
     sleep(5); // stop to accumulate jobs (file to hash)
