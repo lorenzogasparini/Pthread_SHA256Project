@@ -77,6 +77,8 @@ Per compilare con il CMakelist:
 5. ```sh
     make
    ```
-
+6. ```sh
+    ./run_server_clients.sh
+   ```
 [java-shield]: https://img.shields.io/badge/CMAKE-red?style=for-the-badge
 [sqlite-shield]: https://img.shields.io/badge/Database-SQLite-blue?style=for-the-badge
