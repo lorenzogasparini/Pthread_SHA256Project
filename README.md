@@ -51,10 +51,6 @@ Viene utilizzata per sintetizzare contenuti informativi complessi in un formato 
 
 L’obiettivo è anzitutto realizzare un server che permetta multiple computazioni di impronte SHA-256. Il tempo di calcolo per impronta è proporzionale al numero di byte dell’ingresso (ovvero il file), dipendente dalla piattaforma e dalla implementazione dell’algoritmo (∼1 secondo per 70 MB su laptop moderno nella implementazione OpenSSL). Successivamente va realizzato un client che invii l’informazione di file di input al server e riceva l’impronta risultante appena computata.
 
-<p align="center">
-  <img src="https://github.com/lorenzogasparini/Pthread_SHA256Project/blob/master/bin/test.gif"/>
-</p>
-
 ### Built With
 
 Di seguito si indicano le principali librerie, nonchè il sistema di database utilizzato per lo sviluppo del progetto.
